@@ -3,70 +3,76 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bio Energy Index</title>
+<title>Bio Thermo Energy Monitor</title>
 
 <style>
 html,body{
-  margin:0;padding:0;background:#000;
+  margin:0;
+  padding:0;
+  background:#000;
+  color:#fff;
+  overflow:hidden;
   font-family:system-ui,-apple-system;
-  color:#fff;overflow:hidden
 }
+
 video,canvas{
-  position:absolute;inset:0;
-  width:100%;height:100%;object-fit:cover
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
 }
 
-/* aura */
-#aura{
-  position:absolute;left:50%;top:50%;
-  transform:translate(-50%,-50%);
-  width:260px;height:260px;border-radius:50%;
-  filter:blur(28px);
-  background:radial-gradient(circle,
-    rgba(0,255,255,.55),
-    rgba(0,180,255,.3),
-    rgba(0,120,255,.15),
-    rgba(0,0,0,0)
-  );
-  pointer-events:none
-}
+/* ===== UI ===== */
 
-/* energy gauge */
-#energy{
-  position:fixed;right:22px;top:60px;bottom:60px;
-  width:18px;border-radius:10px;
-  background:rgba(255,255,255,.12);
-  overflow:hidden
-}
-#energyFill{
-  position:absolute;bottom:0;left:0;
-  width:100%;height:50%;
-  background:linear-gradient(
-    to top,#00ffcc,#66ffe6,#ffffff
-  );
-  transition:height .2s
-}
-
-/* BIG NUMBER */
 #value{
-  position:absolute;left:50%;top:50%;
+  position:absolute;
+  left:50%;
+  top:50%;
   transform:translate(-50%,-50%);
   font-size:140px;
-  font-weight:700;
-  letter-spacing:.06em;
+  font-weight:800;
+  letter-spacing:.08em;
   text-shadow:
-    0 0 18px rgba(255,255,255,.45),
-    0 0 42px rgba(0,255,255,.35);
+    0 0 20px rgba(255,255,255,.6),
+    0 0 60px rgba(255,120,0,.6);
+  pointer-events:none;
   mix-blend-mode:screen;
-  pointer-events:none
 }
 
-/* label */
+#energy{
+  position:fixed;
+  right:28px;
+  top:60px;
+  bottom:60px;
+  width:22px;
+  background:rgba(255,255,255,.12);
+  border-radius:12px;
+  overflow:hidden;
+}
+
+#energyFill{
+  position:absolute;
+  bottom:0;
+  width:100%;
+  height:50%;
+  background:linear-gradient(
+    to top,
+    #0044ff,
+    #00ffff,
+    #ffff00,
+    #ff3300
+  );
+}
+
 #label{
-  position:fixed;top:18px;left:50%;
+  position:fixed;
+  top:18px;
+  left:50%;
   transform:translateX(-50%);
-  font-size:12px;letter-spacing:.22em;
-  opacity:.6
+  font-size:12px;
+  letter-spacing:.25em;
+  opacity:.6;
 }
 </style>
 </head>
@@ -76,93 +82,109 @@ video,canvas{
 <video id="video" autoplay muted playsinline></video>
 <canvas id="canvas"></canvas>
 
-<div id="aura"></div>
 <div id="value">--</div>
 
-<div id="energy"><div id="energyFill"></div></div>
-<div id="label">BIO · ENERGY · INDEX</div>
+<div id="energy">
+  <div id="energyFill"></div>
+</div>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<div id="label">BIO · THERMO · ENERGY · MONITOR</div>
 
 <script>
-const v=document.getElementById("video");
-const c=document.getElementById("canvas");
-const ctx=c.getContext("2d");
-const aura=document.getElementById("aura");
-const fill=document.getElementById("energyFill");
-const value=document.getElementById("value");
-c.width=innerWidth;c.height=innerHeight;
+/* ===============================
+   SETUP
+================================ */
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const valueEl = document.getElementById("value");
+const fillEl = document.getElementById("energyFill");
 
-/* energy state */
-let energy=0.5;
-let t=0;
+canvas.width = innerWidth;
+canvas.height = innerHeight;
 
-/* pose refinement */
-let centers=[];
-function center(pts){
-  return{
-    x:(pts[0].x+pts[1].x+pts[2].x+pts[3].x)/4,
-    y:(pts[0].y+pts[1].y+pts[2].y+pts[3].y)/4
-  };
+/* ===============================
+   CAMERA
+================================ */
+navigator.mediaDevices.getUserMedia({video:true})
+  .then(s => video.srcObject = s)
+  .catch(e => alert(e));
+
+/* ===============================
+   THERMO STATE
+================================ */
+let prevFrame = null;
+let energy = 0.5;
+let t = 0;
+
+/* ===============================
+   UTILS
+================================ */
+function clamp(v,min,max){
+  return Math.max(min,Math.min(max,v));
 }
-function variance(a){
-  if(a.length<2) return 0;
-  const m=a.reduce((s,v)=>s+v,0)/a.length;
-  return a.reduce((s,v)=>s+(v-m)*(v-m),0)/a.length;
+
+function heatColor(v){
+  const r = Math.floor(255 * clamp((v-0.5)*2,0,1));
+  const b = Math.floor(255 * clamp((0.5-v)*2,0,1));
+  const g = Math.floor(255 * (1-Math.abs(v-0.5)*2));
+  return `rgb(${r},${g},${b})`;
 }
 
-/* pose */
-const pose=new Pose({
-  locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
-});
-pose.setOptions({smoothLandmarks:true});
-pose.onResults(r=>{
-  if(!r.poseLandmarks) return;
-  const pts=[
-    r.poseLandmarks[11],r.poseLandmarks[12],
-    r.poseLandmarks[23],r.poseLandmarks[24]
-  ];
-  centers.push(center(pts));
-  if(centers.length>40) centers.shift();
-  const moves=centers.slice(1).map((p,i)=>
-    Math.hypot(p.x-centers[i].x,p.y-centers[i].y)
-  );
-  const calm=Math.max(0,1-variance(moves)*800);
-  energy=energy*0.8+calm*0.2;
-});
-
-/* camera */
-const cam=new Camera(v,{
-  onFrame:async()=>await pose.send({image:v}),
-  width:640,height:480
-});
-cam.start();
-
-/* render */
+/* ===============================
+   MAIN LOOP
+================================ */
 function loop(){
-  t+=0.01;
-  const base=0.45+0.1*Math.sin(t);
-  const e=Math.min(1,Math.max(0,base*0.6+energy*0.4));
+  t += 0.02;
 
-  fill.style.height=(e*100)+"%";
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  const frame = ctx.getImageData(0,0,canvas.width,canvas.height);
 
-  const size=240+e*160;
-  aura.style.width=size+"px";
-  aura.style.height=size+"px";
-  aura.style.opacity=0.35+e*0.5;
+  if(prevFrame){
+    let diffSum = 0;
+    const d = frame.data;
+    const p = prevFrame.data;
 
-  const display=Math.round(e*100);
-  value.textContent=display;
+    for(let i=0;i<d.length;i+=16){
+      diffSum += Math.abs(d[i]-p[i]); // 輝度差
+    }
 
-  value.style.textShadow=
-    `0 0 ${20+e*40}px rgba(0,255,255,.6)`;
+    const activity = clamp(diffSum / (canvas.width*canvas.height) * 40, 0, 1);
+
+    /* エネルギー更新（動き＋時間的減衰） */
+    energy = energy * 0.85 + (1-activity) * 0.15;
+  }
+
+  prevFrame = frame;
+
+  /* ベース呼吸 */
+  const base = 0.45 + 0.1 * Math.sin(t);
+  const e = clamp(base*0.4 + energy*0.6, 0, 1);
+
+  /* ===============================
+     VISUAL UPDATE
+  ================================ */
+  const percent = Math.round(e * 100);
+  valueEl.textContent = percent;
+
+  fillEl.style.height = (e * 100) + "%";
+  fillEl.style.background = `linear-gradient(
+    to top,
+    #0033ff,
+    #00ffff,
+    #ffff00,
+    #ff2200 ${percent}%
+  )`;
+
+  valueEl.style.color = heatColor(e);
+  valueEl.style.textShadow =
+    `0 0 ${20+e*60}px ${heatColor(e)}`;
 
   requestAnimationFrame(loop);
 }
+
 loop();
 </script>
 
 </body>
 </html>
-

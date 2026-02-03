@@ -3,81 +3,40 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bio-Tensegrity Vertical System</title>
+<title>Full Bio-Tensegrity System</title>
 
 <style>
 html,body{
-  margin:0;
-  padding:0;
-  background:#000;
-  color:#fff;
-  overflow:hidden;
-  font-family:system-ui,-apple-system;
+  margin:0;padding:0;background:#000;color:#fff;
+  overflow:hidden;font-family:system-ui,-apple-system;
 }
-
-video,canvas{
-  position:absolute;
-  inset:0;
-  width:100%;
-  height:100%;
-  object-fit:cover;
-}
+video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 
 /* UI */
 #value{
-  position:absolute;
-  left:50%;
-  top:50%;
+  position:absolute;left:50%;top:50%;
   transform:translate(-50%,-50%);
-  font-size:110px;
-  font-weight:700;
-  letter-spacing:.06em;
-  mix-blend-mode:screen;
-  pointer-events:none;
+  font-size:120px;font-weight:800;
+  letter-spacing:.08em;mix-blend-mode:screen;
 }
-
 #level{
-  position:absolute;
-  left:50%;
-  top:36%;
+  position:absolute;left:50%;top:34%;
   transform:translateX(-50%);
-  font-size:14px;
-  letter-spacing:.25em;
-  opacity:.7;
+  font-size:14px;letter-spacing:.25em;opacity:.7;
 }
-
 #energy{
-  position:fixed;
-  right:22px;
-  top:60px;
-  bottom:60px;
-  width:14px;
-  background:rgba(255,255,255,.15);
-  border-radius:8px;
-  overflow:hidden;
+  position:fixed;right:22px;top:60px;bottom:60px;
+  width:14px;background:rgba(255,255,255,.15);
+  border-radius:8px;overflow:hidden;
 }
 #energyFill{
-  position:absolute;
-  bottom:0;
-  width:100%;
-  height:50%;
-  background:linear-gradient(
-    to top,
-    #0033ff,
-    #00ffff,
-    #ffff00,
-    #ff3300
-  );
+  position:absolute;bottom:0;width:100%;height:50%;
+  background:linear-gradient(to top,#0033ff,#00ffff,#ffff00,#ff3300);
 }
-
 #timer{
-  position:fixed;
-  bottom:22px;
-  left:50%;
+  position:fixed;bottom:22px;left:50%;
   transform:translateX(-50%);
-  font-size:13px;
-  letter-spacing:.18em;
-  opacity:.7;
+  font-size:13px;letter-spacing:.18em;opacity:.7;
 }
 </style>
 </head>
@@ -89,135 +48,121 @@ video,canvas{
 
 <div id="level">LEVEL 1</div>
 <div id="value">--</div>
-
 <div id="energy"><div id="energyFill"></div></div>
 <div id="timer">HOLD 60s</div>
 
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
 <script>
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
+const video=document.getElementById("video");
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
 
-const valueEl = document.getElementById("value");
-const levelEl = document.getElementById("level");
-const fillEl  = document.getElementById("energyFill");
-const timerEl = document.getElementById("timer");
+const valueEl=document.getElementById("value");
+const levelEl=document.getElementById("level");
+const fillEl=document.getElementById("energyFill");
+const timerEl=document.getElementById("timer");
 
-canvas.width = innerWidth;
-canvas.height = innerHeight;
+canvas.width=innerWidth;
+canvas.height=innerHeight;
 
 /* CAMERA */
-navigator.mediaDevices.getUserMedia({video:true})
-  .then(s=>video.srcObject=s)
-  .catch(e=>alert(e));
+const pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`});
+pose.setOptions({modelComplexity:1,smoothLandmarks:true});
+const camera=new Camera(video,{
+  onFrame:async()=>await pose.send({image:video}),
+  width:640,height:480
+});
+camera.start();
 
 /* STATE */
-let prevFrame=null;
-let energy=0.5;
-let level=1;
-let holdTime=0;
-let lastTime=performance.now();
-let t=0;
-
-/* UTILS */
+let energy=0.5,level=1,holdTime=0,lastTime=performance.now(),t=0;
 function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
 
 /* LOOP */
-function loop(now){
-  const dt=(now-lastTime)/1000;
-  lastTime=now;
-  t+=dt;
+pose.onResults(r=>{
+  const now=performance.now();
+  const dt=(now-lastTime)/1000; lastTime=now; t+=dt;
 
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  ctx.drawImage(r.image,0,0,canvas.width,canvas.height);
+  if(!r.poseLandmarks) return;
 
-  const frame=ctx.getImageData(0,0,canvas.width,canvas.height);
+  const lm=r.poseLandmarks;
+  const ls=lm[11],rs=lm[12],lh=lm[23],rh=lm[24];
 
-  let activity=1;
-  if(prevFrame){
-    let diff=0;
-    const d=frame.data,p=prevFrame.data;
-    for(let i=0;i<d.length;i+=80){
-      diff+=Math.abs(d[i]-p[i]);
-    }
-    activity=clamp(diff/(canvas.width*canvas.height)*90,0,1);
-    energy=energy*0.85+(1-activity)*0.15;
-  }
-  prevFrame=frame;
+  /* === 等身大スケール計算 === */
+  const shoulderW=Math.hypot(ls.x-rs.x,ls.y-rs.y)*canvas.width;
+  const torsoH=Math.hypot(
+    (ls.x+rs.x)/2-(lh.x+rh.x)/2,
+    (ls.y+rs.y)/2-(lh.y+rh.y)/2
+  )*canvas.height;
 
-  /* HOLD / LEVEL */
-  if(activity<0.14){
-    holdTime+=dt;
-  }else{
-    holdTime=0;
-  }
-  if(holdTime>=60){
-    level++;
-    holdTime=0;
-  }
+  const cx=((ls.x+rs.x+lh.x+rh.x)/4)*canvas.width;
+  const cy=((ls.y+rs.y+lh.y+rh.y)/4)*canvas.height;
 
-  /* ENERGY VALUE */
-  const base=0.45+0.1*Math.sin(t);
-  const e=clamp(base*0.4+energy*0.6,0,1);
+  /* === 安定度 === */
+  const sway=Math.abs(ls.x-rs.x);
+  energy=energy*0.85+(1-clamp(sway*4,0,1))*0.15;
 
-  const maxValue=100+level*15;
-  const display=Math.round(e*maxValue);
+  if(sway<0.015){holdTime+=dt}else{holdTime=0}
+  if(holdTime>=60){level++;holdTime=0}
+
+  const e=clamp(energy,0,1);
+  const display=Math.round(e*(100+level*20));
 
   valueEl.textContent=display;
   levelEl.textContent="LEVEL "+level;
   fillEl.style.height=(e*100)+"%";
-  timerEl.textContent=
-    holdTime>0 ? "HOLD "+Math.floor(60-holdTime)+"s" : "HOLD 60s";
+  timerEl.textContent=holdTime>0?"HOLD "+Math.floor(60-holdTime)+"s":"HOLD 60s";
 
-  valueEl.style.textShadow=
-    `0 0 ${16+level*6}px rgba(255,210,140,.6)`;
-
-  /* ===============================
-     BIO-TENSEGRITY SPIRAL (FIXED)
-  ================================ */
-  const cx=canvas.width/2;
-  const cy=canvas.height/2;
-
-  const verticalRadius = canvas.height * 0.32;
-  const horizontalRadius = canvas.width * 0.12; // ← 太らない制限
-
-  const rings = 10 + level * 2;
-  const segments = 160;
-
+  /* === テンセグリティ描画 === */
   ctx.save();
   ctx.translate(cx,cy);
 
-  for(let r=0;r<rings;r++){
-    const vRatio = r / rings;
-    const ry = verticalRadius * vRatio;
-    const rx = horizontalRadius * vRatio;
+  const nodes=8+level;
+  const halfH=torsoH*0.7;
+  const halfW=shoulderW*0.6;
 
-    const twist = r * 0.55 + e * 3.2;
+  const pts=[];
+  for(let i=0;i<nodes;i++){
+    const y=-halfH+(i/(nodes-1))*halfH*2;
+    const swayX=(1-e)*10*Math.sin(t*2+i);
+    pts.push({x:swayX,y});
+  }
 
+  /* 圧縮要素（骨） */
+  ctx.strokeStyle=`rgba(255,220,160,${0.3+e*0.4})`;
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
+  ctx.stroke();
+
+  /* 張力ケーブル */
+  ctx.lineWidth=0.8;
+  for(let i=0;i<pts.length-2;i++){
+    const dir=i%2?1:-1;
     ctx.beginPath();
-    for(let i=0;i<=segments;i++){
-      const a = i/segments * Math.PI*2;
-      const spiral = a + twist;
-      const noise = (1-activity) * 4 * Math.sin(a*2 + t*1.8);
-
-      const x = Math.cos(spiral) * (rx + noise);
-      const y = Math.sin(spiral) * (ry + noise);
-
-      i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
-    }
-
-    ctx.strokeStyle =
-      `rgba(${180+e*60},${120+e*90},90,${0.05+e*0.22})`;
-    ctx.lineWidth = 0.45 + e*0.7;
+    ctx.moveTo(pts[i].x,pts[i].y);
+    ctx.lineTo(pts[i+2].x+dir*halfW*0.4,pts[i+2].y);
+    ctx.strokeStyle=`rgba(120,180,255,${0.15+e*0.35})`;
     ctx.stroke();
   }
 
+  /* 螺旋筋膜 */
+  ctx.beginPath();
+  for(let i=0;i<pts.length;i++){
+    const a=i*0.8+t;
+    const x=Math.cos(a)*halfW*0.3;
+    const y=pts[i].y;
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  }
+  ctx.strokeStyle=`rgba(180,140,255,${0.12+e*0.3})`;
+  ctx.stroke();
+
   ctx.restore();
-
-  requestAnimationFrame(loop);
-}
-
-requestAnimationFrame(loop);
+});
 </script>
 
 </body>

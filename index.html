@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>Biomechanics Perception App</title>
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+video, canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+#overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+  box-sizing: border-box;
+}
+.metric {
+  font-size: 14px;
+  line-height: 1.6;
+}
+#title {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  font-size: 16px;
+  opacity: 0.85;
+}
+#recordHint {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 12px;
+  opacity: 0.6;
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+
+  <div id="title">Biomechanics / Perception Feed</div>
+  <div id="recordHint">Vertical format · TikTok-ready</div>
+
+  <div id="overlay">
+    <div class="metric" id="postureMetric">Posture coherence: --</div>
+    <div class="metric" id="balanceMetric">Balance deviation: --</div>
+    <div class="metric" id="flowMetric">Movement continuity: --</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const postureMetric = document.getElementById("postureMetric");
+const balanceMetric = document.getElementById("balanceMetric");
+const flowMetric = document.getElementById("flowMetric");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let lastCenter = null;
+let lastVelocity = 0;
+
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function computeMetrics(landmarks) {
+  const leftShoulder = landmarks[11];
+  const rightShoulder = landmarks[12];
+  const leftHip = landmarks[23];
+  const rightHip = landmarks[24];
+
+  const shoulderCenter = {
+    x: (leftShoulder.x + rightShoulder.x) / 2,
+    y: (leftShoulder.y + rightShoulder.y) / 2
+  };
+  const hipCenter = {
+    x: (leftHip.x + rightHip.x) / 2,
+    y: (leftHip.y + rightHip.y) / 2
+  };
+
+  const posture = 1 - Math.min(distance(shoulderCenter, hipCenter), 0.3);
+  const balance = Math.abs(shoulderCenter.x - hipCenter.x);
+
+  let flow = 0;
+  if (lastCenter) {
+    const velocity = distance(shoulderCenter, lastCenter);
+    flow = Math.abs(velocity - lastVelocity);
+    lastVelocity = velocity;
+  }
+  lastCenter = shoulderCenter;
+
+  return { posture, balance, flow };
+}
+
+const pose = new Pose({
+  locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+});
+
+pose.setOptions({
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  enableSegmentation: false,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+
+pose.onResults(results => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+  if (results.poseLandmarks) {
+    drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, {color: "rgba(255,255,255,0.3)", lineWidth: 2});
+    drawLandmarks(ctx, results.poseLandmarks, {color: "#ffffff", radius: 2});
+
+    const m = computeMetrics(results.poseLandmarks);
+    postureMetric.textContent = "Posture coherence: " + m.posture.toFixed(2);
+    balanceMetric.textContent = "Balance deviation: " + m.balance.toFixed(2);
+    flowMetric.textContent = "Movement continuity: " + m.flow.toFixed(2);
+  }
+});
+
+const camera = new Camera(video, {
+  onFrame: async () => {
+    await pose.send({image: video});
+  },
+  width: 720,
+  height: 1280
+});
+
+camera.start();
+</script>
+</body>
+</html>

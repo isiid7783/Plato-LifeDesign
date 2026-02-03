@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bio Thermo Energy Monitor</title>
+<title>Bio-Tensegrity Spiral System</title>
 
 <style>
 html,body{
@@ -23,34 +23,39 @@ video,canvas{
   object-fit:cover;
 }
 
-/* ===== UI ===== */
-
+/* UI */
 #value{
   position:absolute;
   left:50%;
   top:50%;
   transform:translate(-50%,-50%);
-  font-size:140px;
+  font-size:120px;
   font-weight:800;
   letter-spacing:.08em;
-  text-shadow:
-    0 0 20px rgba(255,255,255,.6),
-    0 0 60px rgba(255,120,0,.6);
-  pointer-events:none;
   mix-blend-mode:screen;
+  pointer-events:none;
+}
+
+#level{
+  position:absolute;
+  left:50%;
+  top:38%;
+  transform:translateX(-50%);
+  font-size:16px;
+  letter-spacing:.2em;
+  opacity:.7;
 }
 
 #energy{
   position:fixed;
-  right:28px;
+  right:26px;
   top:60px;
   bottom:60px;
-  width:22px;
+  width:18px;
   background:rgba(255,255,255,.12);
-  border-radius:12px;
+  border-radius:10px;
   overflow:hidden;
 }
-
 #energyFill{
   position:absolute;
   bottom:0;
@@ -58,21 +63,21 @@ video,canvas{
   height:50%;
   background:linear-gradient(
     to top,
-    #0044ff,
+    #0033ff,
     #00ffff,
     #ffff00,
     #ff3300
   );
 }
 
-#label{
+#timer{
   position:fixed;
-  top:18px;
+  bottom:22px;
   left:50%;
   transform:translateX(-50%);
-  font-size:12px;
-  letter-spacing:.25em;
-  opacity:.6;
+  font-size:14px;
+  letter-spacing:.15em;
+  opacity:.7;
 }
 </style>
 </head>
@@ -82,108 +87,126 @@ video,canvas{
 <video id="video" autoplay muted playsinline></video>
 <canvas id="canvas"></canvas>
 
+<div id="level">LEVEL 1</div>
 <div id="value">--</div>
 
-<div id="energy">
-  <div id="energyFill"></div>
-</div>
-
-<div id="label">BIO · THERMO · ENERGY · MONITOR</div>
+<div id="energy"><div id="energyFill"></div></div>
+<div id="timer">HOLD 60s</div>
 
 <script>
-/* ===============================
-   SETUP
-================================ */
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+
 const valueEl = document.getElementById("value");
-const fillEl = document.getElementById("energyFill");
+const levelEl = document.getElementById("level");
+const fillEl  = document.getElementById("energyFill");
+const timerEl = document.getElementById("timer");
 
 canvas.width = innerWidth;
 canvas.height = innerHeight;
 
-/* ===============================
-   CAMERA
-================================ */
+/* CAMERA */
 navigator.mediaDevices.getUserMedia({video:true})
-  .then(s => video.srcObject = s)
-  .catch(e => alert(e));
+  .then(s=>video.srcObject=s)
+  .catch(e=>alert(e));
 
-/* ===============================
-   THERMO STATE
-================================ */
-let prevFrame = null;
-let energy = 0.5;
-let t = 0;
+/* STATE */
+let prevFrame=null;
+let energy=0.5;
+let level=1;
+let holdTime=0;
+let lastTime=performance.now();
+let t=0;
 
-/* ===============================
-   UTILS
-================================ */
-function clamp(v,min,max){
-  return Math.max(min,Math.min(max,v));
-}
+/* UTILS */
+function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
 
-function heatColor(v){
-  const r = Math.floor(255 * clamp((v-0.5)*2,0,1));
-  const b = Math.floor(255 * clamp((0.5-v)*2,0,1));
-  const g = Math.floor(255 * (1-Math.abs(v-0.5)*2));
-  return `rgb(${r},${g},${b})`;
-}
+/* MAIN LOOP */
+function loop(now){
+  const dt=(now-lastTime)/1000;
+  lastTime=now;
+  t+=dt;
 
-/* ===============================
-   MAIN LOOP
-================================ */
-function loop(){
-  t += 0.02;
-
+  ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.drawImage(video,0,0,canvas.width,canvas.height);
-  const frame = ctx.getImageData(0,0,canvas.width,canvas.height);
 
+  const frame=ctx.getImageData(0,0,canvas.width,canvas.height);
+
+  let activity=1;
   if(prevFrame){
-    let diffSum = 0;
-    const d = frame.data;
-    const p = prevFrame.data;
-
-    for(let i=0;i<d.length;i+=16){
-      diffSum += Math.abs(d[i]-p[i]); // 輝度差
+    let diff=0;
+    const d=frame.data,p=prevFrame.data;
+    for(let i=0;i<d.length;i+=64){
+      diff+=Math.abs(d[i]-p[i]);
     }
+    activity=clamp(diff/(canvas.width*canvas.height)*80,0,1);
+    energy=energy*0.85+(1-activity)*0.15;
+  }
+  prevFrame=frame;
 
-    const activity = clamp(diffSum / (canvas.width*canvas.height) * 40, 0, 1);
-
-    /* エネルギー更新（動き＋時間的減衰） */
-    energy = energy * 0.85 + (1-activity) * 0.15;
+  /* HOLD / LEVEL */
+  if(activity<0.15){
+    holdTime+=dt;
+  }else{
+    holdTime=0;
+  }
+  if(holdTime>=60){
+    level++;
+    holdTime=0;
   }
 
-  prevFrame = frame;
+  /* VISUAL ENERGY */
+  const base=0.45+0.1*Math.sin(t);
+  const e=clamp(base*0.4+energy*0.6,0,1);
 
-  /* ベース呼吸 */
-  const base = 0.45 + 0.1 * Math.sin(t);
-  const e = clamp(base*0.4 + energy*0.6, 0, 1);
+  const maxValue=100+level*20;
+  const display=Math.round(e*maxValue);
+
+  valueEl.textContent=display;
+  levelEl.textContent="LEVEL "+level;
+  fillEl.style.height=(e*100)+"%";
+  timerEl.textContent=
+    holdTime>0 ? "HOLD "+Math.floor(60-holdTime)+"s" : "HOLD 60s";
+
+  valueEl.style.textShadow=
+    `0 0 ${20+level*10}px rgba(255,200,100,.7)`;
 
   /* ===============================
-     VISUAL UPDATE
+     BIO-TENSEGRITY SPIRAL
   ================================ */
-  const percent = Math.round(e * 100);
-  valueEl.textContent = percent;
+  const cx=canvas.width/2;
+  const cy=canvas.height/2;
+  const rings=12+level*2;
+  const segments=180;
+  const maxR=80+e*220;
 
-  fillEl.style.height = (e * 100) + "%";
-  fillEl.style.background = `linear-gradient(
-    to top,
-    #0033ff,
-    #00ffff,
-    #ffff00,
-    #ff2200 ${percent}%
-  )`;
+  ctx.save();
+  ctx.translate(cx,cy);
 
-  valueEl.style.color = heatColor(e);
-  valueEl.style.textShadow =
-    `0 0 ${20+e*60}px ${heatColor(e)}`;
+  for(let r=0;r<rings;r++){
+    const radius=(r/rings)*maxR;
+    const twist=r*0.6+e*4;
+    ctx.beginPath();
+    for(let i=0;i<=segments;i++){
+      const a=i/segments*Math.PI*2;
+      const spiral=a+twist;
+      const noise=(1-activity)*6*Math.sin(a*3+t*2);
+      const x=Math.cos(spiral)*(radius+noise);
+      const y=Math.sin(spiral)*(radius+noise);
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.strokeStyle=`rgba(${200+e*55},${120+e*80},${80},${0.08+e*0.25})`;
+    ctx.lineWidth=0.5+e*0.8;
+    ctx.stroke();
+  }
+
+  ctx.restore();
 
   requestAnimationFrame(loop);
 }
 
-loop();
+requestAnimationFrame(loop);
 </script>
 
 </body>

@@ -3,115 +3,70 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stability Stillness Index</title>
+<title>Bio Energy Index</title>
 
 <style>
 html,body{
-  margin:0;
-  padding:0;
-  background:#000;
+  margin:0;padding:0;background:#000;
   font-family:system-ui,-apple-system;
-  color:#fff;
-  overflow:hidden;
+  color:#fff;overflow:hidden
 }
-
-/* camera */
 video,canvas{
-  position:absolute;
-  inset:0;
-  width:100%;
-  height:100%;
-  object-fit:cover;
+  position:absolute;inset:0;
+  width:100%;height:100%;object-fit:cover
 }
 
-/* gradient frame */
-#frame{
-  position:fixed;
-  inset:0;
-  pointer-events:none;
-  background:linear-gradient(
-    to bottom,
-    rgba(0,0,0,0.9),
-    rgba(0,0,0,0.15) 35%,
-    rgba(0,0,0,0.15) 65%,
-    rgba(0,0,0,0.95)
-  );
-}
-
-/* title */
-#title{
-  position:fixed;
-  top:16px;
-  left:50%;
-  transform:translateX(-50%);
-  font-size:12px;
-  letter-spacing:0.25em;
-  opacity:0.6;
-}
-
-/* panel */
-#panel{
-  position:fixed;
-  bottom:0;
-  left:0;
-  width:100%;
-  padding:22px 26px;
-  box-sizing:border-box;
-  background:linear-gradient(
-    to top,
-    rgba(0,0,0,0.98),
-    rgba(0,0,0,0.75),
+/* aura */
+#aura{
+  position:absolute;left:50%;top:50%;
+  transform:translate(-50%,-50%);
+  width:260px;height:260px;border-radius:50%;
+  filter:blur(28px);
+  background:radial-gradient(circle,
+    rgba(0,255,255,.55),
+    rgba(0,180,255,.3),
+    rgba(0,120,255,.15),
     rgba(0,0,0,0)
   );
+  pointer-events:none
 }
 
-/* numbers */
-#ssi{
-  font-size:56px;
-  font-weight:600;
-  letter-spacing:0.04em;
-  text-shadow:0 0 12px rgba(255,255,255,0.35);
+/* energy gauge */
+#energy{
+  position:fixed;right:22px;top:60px;bottom:60px;
+  width:18px;border-radius:10px;
+  background:rgba(255,255,255,.12);
+  overflow:hidden
+}
+#energyFill{
+  position:absolute;bottom:0;left:0;
+  width:100%;height:50%;
+  background:linear-gradient(
+    to top,#00ffcc,#66ffe6,#ffffff
+  );
+  transition:height .2s
 }
 
-#ssi.ui-strong{
-  font-size:72px;
+/* BIG NUMBER */
+#value{
+  position:absolute;left:50%;top:50%;
+  transform:translate(-50%,-50%);
+  font-size:140px;
+  font-weight:700;
+  letter-spacing:.06em;
+  text-shadow:
+    0 0 18px rgba(255,255,255,.45),
+    0 0 42px rgba(0,255,255,.35);
+  mix-blend-mode:screen;
+  pointer-events:none
 }
 
-.sub{
-  display:flex;
-  gap:32px;
-  margin-top:10px;
-  font-size:14px;
-  opacity:0.8;
-}
-
-/* controls */
-#controls{
-  position:fixed;
-  right:16px;
-  bottom:140px;
-  display:flex;
-  flex-direction:column;
-  gap:14px;
-}
-
-.ctrl{
-  width:52px;
-  height:52px;
-  border-radius:50%;
-  background:rgba(0,0,0,0.75);
-  border:1px solid rgba(255,255,255,0.4);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size:11px;
-  letter-spacing:0.1em;
-  user-select:none;
-}
-
-.ctrl.active{
-  background:#fff;
-  color:#000;
+/* label */
+#label{
+  position:fixed;top:18px;left:50%;
+  transform:translateX(-50%);
+  font-size:12px;letter-spacing:.22em;
+  opacity:.6
 }
 </style>
 </head>
@@ -121,134 +76,93 @@ video,canvas{
 <video id="video" autoplay muted playsinline></video>
 <canvas id="canvas"></canvas>
 
-<div id="frame"></div>
-<div id="title">STABILITY · STILLNESS · INDEX</div>
+<div id="aura"></div>
+<div id="value">--</div>
 
-<div id="controls">
-  <div class="ctrl" id="pause">PAUSE</div>
-  <div class="ctrl" id="reset">RESET</div>
-  <div class="ctrl" id="avg">AVG</div>
-  <div class="ctrl" id="ui">UI</div>
-</div>
-
-<div id="panel">
-  <div id="ssi">--</div>
-  <div class="sub">
-    <div>STABILITY <span id="stab">--</span></div>
-    <div>STILLNESS <span id="still">--</span></div>
-  </div>
-</div>
+<div id="energy"><div id="energyFill"></div></div>
+<div id="label">BIO · ENERGY · INDEX</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <script>
-const video=document.getElementById("video");
-const canvas=document.getElementById("canvas");
-const ctx=canvas.getContext("2d");
-canvas.width=innerWidth;
-canvas.height=innerHeight;
+const v=document.getElementById("video");
+const c=document.getElementById("canvas");
+const ctx=c.getContext("2d");
+const aura=document.getElementById("aura");
+const fill=document.getElementById("energyFill");
+const value=document.getElementById("value");
+c.width=innerWidth;c.height=innerHeight;
 
-const ssiEl=document.getElementById("ssi");
-const stabEl=document.getElementById("stab");
-const stillEl=document.getElementById("still");
+/* energy state */
+let energy=0.5;
+let t=0;
 
-let centers=[], angles=[], ssiHist=[];
-let paused=false, useAvg=false, strongUI=false;
-
-/* math */
+/* pose refinement */
+let centers=[];
 function center(pts){
   return{
     x:(pts[0].x+pts[1].x+pts[2].x+pts[3].x)/4,
     y:(pts[0].y+pts[1].y+pts[2].y+pts[3].y)/4
   };
 }
-function angle(a,b){
-  return Math.atan2(b.y-a.y,b.x-a.x);
+function variance(a){
+  if(a.length<2) return 0;
+  const m=a.reduce((s,v)=>s+v,0)/a.length;
+  return a.reduce((s,v)=>s+(v-m)*(v-m),0)/a.length;
 }
-function variance(arr){
-  const m=arr.reduce((a,b)=>a+b,0)/arr.length;
-  return arr.reduce((a,b)=>a+(b-m)*(b-m),0)/arr.length;
-}
-
-/* buttons */
-const btn=id=>document.getElementById(id);
-
-btn("pause").onclick=()=>{
-  paused=!paused;
-  btn("pause").classList.toggle("active",paused);
-};
-
-btn("reset").onclick=()=>{
-  centers=[];angles=[];ssiHist=[];
-};
-
-btn("avg").onclick=()=>{
-  useAvg=!useAvg;
-  btn("avg").classList.toggle("active",useAvg);
-};
-
-btn("ui").onclick=()=>{
-  strongUI=!strongUI;
-  ssiEl.classList.toggle("ui-strong",strongUI);
-  btn("ui").classList.toggle("active",strongUI);
-};
 
 /* pose */
 const pose=new Pose({
   locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
 });
-pose.setOptions({
-  smoothLandmarks:true,
-  minDetectionConfidence:0.5,
-  minTrackingConfidence:0.5
-});
-
+pose.setOptions({smoothLandmarks:true});
 pose.onResults(r=>{
-  ctx.drawImage(r.image,0,0,canvas.width,canvas.height);
-  if(!r.poseLandmarks || paused) return;
-
-  const ls=r.poseLandmarks[11];
-  const rs=r.poseLandmarks[12];
-  const lh=r.poseLandmarks[23];
-  const rh=r.poseLandmarks[24];
-
-  const c=center([ls,rs,lh,rh]);
-  const a=Math.abs(angle(ls,rs)-angle(lh,rh));
-
-  centers.push(c);
-  angles.push(a);
-  if(centers.length>60){centers.shift();angles.shift();}
-  if(centers.length<20) return;
-
+  if(!r.poseLandmarks) return;
+  const pts=[
+    r.poseLandmarks[11],r.poseLandmarks[12],
+    r.poseLandmarks[23],r.poseLandmarks[24]
+  ];
+  centers.push(center(pts));
+  if(centers.length>40) centers.shift();
   const moves=centers.slice(1).map((p,i)=>
     Math.hypot(p.x-centers[i].x,p.y-centers[i].y)
   );
-
-  const stability=Math.max(0,1-variance(moves)*500);
-  const stillness=Math.max(0,1-variance(angles)*200);
-  const ssi=Math.round((stability*0.6+stillness*0.4)*100);
-
-  ssiHist.push(ssi);
-  if(ssiHist.length>900) ssiHist.shift();
-
-  const displaySSI=useAvg
-    ? Math.round(ssiHist.reduce((a,b)=>a+b,0)/ssiHist.length)
-    : ssi;
-
-  ssiEl.textContent=displaySSI;
-  stabEl.textContent=Math.round(stability*100);
-  stillEl.textContent=Math.round(stillness*100);
+  const calm=Math.max(0,1-variance(moves)*800);
+  energy=energy*0.8+calm*0.2;
 });
 
 /* camera */
-const camera=new Camera(video,{
-  onFrame:async()=>await pose.send({image:video}),
-  width:640,
-  height:480
+const cam=new Camera(v,{
+  onFrame:async()=>await pose.send({image:v}),
+  width:640,height:480
 });
-camera.start();
+cam.start();
+
+/* render */
+function loop(){
+  t+=0.01;
+  const base=0.45+0.1*Math.sin(t);
+  const e=Math.min(1,Math.max(0,base*0.6+energy*0.4));
+
+  fill.style.height=(e*100)+"%";
+
+  const size=240+e*160;
+  aura.style.width=size+"px";
+  aura.style.height=size+"px";
+  aura.style.opacity=0.35+e*0.5;
+
+  const display=Math.round(e*100);
+  value.textContent=display;
+
+  value.style.textShadow=
+    `0 0 ${20+e*40}px rgba(0,255,255,.6)`;
+
+  requestAnimationFrame(loop);
+}
+loop();
 </script>
 
 </body>
 </html>
+

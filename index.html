@@ -3,78 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Plato Network – Body Avatar Interface</title>
+<title>Plato Network – Body Avatar UI</title>
 
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #fff;
-  color: #000;
-  font-family: system-ui, -apple-system;
+html,body{margin:0;padding:0;background:#000;color:#fff;overflow:hidden}
+#app{position:fixed;inset:0}
+video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#controls{
+  position:absolute;right:12px;bottom:80px;
+  display:flex;flex-direction:column;gap:14px
 }
-
-#app {
-  position: fixed;
-  inset: 0;
-  overflow: hidden;
+.ctrl{
+  width:46px;height:46px;border-radius:50%;
+  background:rgba(0,0,0,.6);border:1px solid #fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;user-select:none
 }
-
-video, canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-/* center axis */
-#axis {
-  position: absolute;
-  left: 50%;
-  top: 0;
-  width: 1px;
-  height: 100%;
-  background: rgba(0,0,0,0.25);
-  pointer-events: none;
-}
-
-/* controls */
-#controls {
-  position: absolute;
-  right: 12px;
-  bottom: 80px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.ctrl {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: 1px solid rgba(0,0,0,0.4);
-  background: rgba(255,255,255,0.85);
-  font-size: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  user-select: none;
-}
-
-.ctrl.active {
-  background: #000;
-  color: #fff;
-}
-
-#label {
-  position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  opacity: 0.6;
+.ctrl.active{background:#fff;color:#000}
+#axis{
+  position:absolute;left:50%;top:0;width:1px;height:100%;
+  background:rgba(255,255,255,.3)
 }
 </style>
 </head>
@@ -93,8 +41,6 @@ video, canvas {
     <div class="ctrl" id="face">FACE</div>
     <div class="ctrl" id="rst">RST</div>
   </div>
-
-  <div id="label">PLATO · BODY AVATAR NETWORK</div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
@@ -102,174 +48,79 @@ video, canvas {
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <script>
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
+const v=document.getElementById("video");
+const c=document.getElementById("canvas");
+const x=c.getContext("2d");
+c.width=innerWidth;c.height=innerHeight;
 
-canvas.width = innerWidth;
-canvas.height = innerHeight;
+let hist=[],maxH=80,rec=false,inv=false,lock=false,lockX=null;
+let faceMode=1,face=null;
 
-let history = [];
-let maxHistory = 120;
-let recording = false;
-let inverted = false;
-let axisLocked = false;
-let lockedX = null;
+const btn=i=>document.getElementById(i);
+btn("rec").onclick=()=>btn("rec").classList.toggle("active",rec=!rec);
+btn("inv").onclick=()=>btn("inv").classList.toggle("active",inv=!inv);
+btn("trc").onclick=()=>{maxH=maxH===80?240:80;btn("trc").classList.toggle("active")}
+btn("axs").onclick=()=>{lock=!lock;lockX=null;btn("axs").classList.toggle("active")}
+btn("face").onclick=()=>{faceMode=(faceMode+1)%3;btn("face").classList.toggle("active",faceMode)}
+btn("rst").onclick=()=>hist=[];
 
-let faceMode = 0; // 0 off, 1 wire, 2 mask
+const pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`});
+pose.setOptions({smoothLandmarks:true});
 
-const btn = id => document.getElementById(id);
-
-btn("rec").onclick = ()=> {
-  recording = !recording;
-  btn("rec").classList.toggle("active", recording);
-};
-
-btn("inv").onclick = ()=> {
-  inverted = !inverted;
-  document.body.style.background = inverted ? "#000" : "#fff";
-  btn("inv").classList.toggle("active", inverted);
-};
-
-btn("trc").onclick = ()=> {
-  maxHistory = maxHistory===120 ? 300 : 120;
-  btn("trc").classList.toggle("active");
-};
-
-btn("axs").onclick = ()=> {
-  axisLocked = !axisLocked;
-  lockedX = null;
-  btn("axs").classList.toggle("active");
-};
-
-btn("face").onclick = ()=> {
-  faceMode = (faceMode + 1) % 3;
-  btn("face").classList.toggle("active", faceMode!==0);
-};
-
-btn("rst").onclick = ()=> {
-  history = [];
-};
-
-function center(pts){
-  let x=0,y=0;
-  pts.forEach(p=>{x+=p.x;y+=p.y});
-  return {x:x/pts.length,y:y/pts.length};
-}
-
-function angle(a,b){
-  return Math.atan2(b.y-a.y,b.x-a.x);
-}
-
-/* Face */
-let faceLandmarks = null;
-
-const faceMesh = new FaceMesh({
-  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
-});
-
-faceMesh.setOptions({
-  maxNumFaces: 1,
-  refineLandmarks: false,
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5
-});
-
-faceMesh.onResults(r=>{
-  faceLandmarks = r.multiFaceLandmarks?.[0] || null;
-});
-
-/* Pose */
-const pose = new Pose({
-  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
-});
-
-pose.setOptions({
-  modelComplexity: 1,
-  smoothLandmarks: true,
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5
-});
+const faceMesh=new FaceMesh({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
+faceMesh.setOptions({maxNumFaces:1});
+faceMesh.onResults(r=>face=r.multiFaceLandmarks?.[0]);
 
 pose.onResults(r=>{
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.drawImage(r.image,0,0,canvas.width,canvas.height);
+  x.save();
+  if(inv){x.filter="invert(1)"}else{x.filter="none"}
+  x.drawImage(r.image,0,0,c.width,c.height);
+  x.restore();
 
   if(r.poseLandmarks){
-    const ls = r.poseLandmarks[11];
-    const rs = r.poseLandmarks[12];
-    const lh = r.poseLandmarks[23];
-    const rh = r.poseLandmarks[24];
-
-    const shoulderAngle = angle(ls,rs);
-    const hipAngle = angle(lh,rh);
-    const parallelism = Math.abs(shoulderAngle - hipAngle);
-
-    let c = center([ls,rs,lh,rh]);
-    if(axisLocked){
-      if(lockedX===null) lockedX = c.x;
-      c.x = lockedX;
-    }
-
-    if(recording || history.length===0){
-      history.push({c,parallelism});
-      if(history.length>maxHistory) history.shift();
-    }
-
-    history.forEach((h,i)=>{
-      const a = i/history.length;
-      ctx.strokeStyle = inverted
-        ? `rgba(255,255,255,${a})`
-        : `rgba(0,0,0,${a})`;
-      ctx.lineWidth = Math.max(0.5,3-h.parallelism*8);
-      if(i>0){
-        const p = history[i-1].c;
-        ctx.beginPath();
-        ctx.moveTo(p.x*canvas.width,p.y*canvas.height);
-        ctx.lineTo(h.c.x*canvas.width,h.c.y*canvas.height);
-        ctx.stroke();
-      }
+    let pts=[11,12,23,24].map(i=>r.poseLandmarks[i]);
+    let cx=pts.reduce((a,p)=>a+p.x,0)/4;
+    let cy=pts.reduce((a,p)=>a+p.y,0)/4;
+    if(lock){if(lockX==null)lockX=cx;cx=lockX}
+    if(rec||!hist.length){hist.push({x:cx,y:cy});if(hist.length>maxH)hist.shift()}
+    x.strokeStyle=inv?"#fff":"#000";
+    x.beginPath();
+    hist.forEach((p,i)=>{
+      let X=p.x*c.width,Y=p.y*c.height;
+      i?x.lineTo(X,Y):x.moveTo(X,Y);
     });
+    x.stroke();
   }
 
-  /* Face Avatar */
-  if(faceLandmarks && faceMode!==0){
-    ctx.strokeStyle = inverted ? "#fff" : "#000";
-    ctx.fillStyle = inverted ? "#000" : "#fff";
+  if(face && faceMode){
+    let xs=face.map(p=>p.x*c.width);
+    let ys=face.map(p=>p.y*c.height);
+    let cx=xs.reduce((a,b)=>a+b,0)/xs.length;
+    let cy=ys.reduce((a,b)=>a+b,0)/ys.length;
+    let r=Math.max(...xs.map((x,i)=>Math.hypot(x-cx,ys[i]-cy)));
 
-    if(faceMode===1){
-      ctx.lineWidth = 0.5;
-      faceLandmarks.forEach(p=>{
-        ctx.beginPath();
-        ctx.arc(p.x*canvas.width,p.y*canvas.height,1,0,Math.PI*2);
-        ctx.stroke();
-      });
-    }
+    x.fillStyle=inv?"#000":"#000";
+    x.beginPath();x.arc(cx,cy,r,0,Math.PI*2);x.fill();
 
     if(faceMode===2){
-      ctx.beginPath();
-      faceLandmarks.forEach((p,i)=>{
-        const x=p.x*canvas.width, y=p.y*canvas.height;
-        i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+      x.strokeStyle=inv?"#fff":"#fff";
+      face.forEach(p=>{
+        x.beginPath();
+        x.arc(p.x*c.width,p.y*c.height,1.5,0,6.28);
+        x.stroke();
       });
-      ctx.closePath();
-      ctx.globalAlpha = 0.85;
-      ctx.fill();
-      ctx.globalAlpha = 1;
     }
   }
 });
 
-const camera = new Camera(video,{
-  onFrame: async()=>{
-    await pose.send({image:video});
-    await faceMesh.send({image:video});
+const cam=new Camera(v,{
+  onFrame:async()=>{
+    await pose.send({image:v});
+    await faceMesh.send({image:v});
   },
-  width:720,
-  height:1280
+  width:720,height:1280
 });
-
-camera.start();
+cam.start();
 </script>
 </body>
 </html>

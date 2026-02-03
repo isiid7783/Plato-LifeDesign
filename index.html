@@ -3,124 +3,204 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Plato Network – Body Avatar UI</title>
+<title>Stability–Stillness Index</title>
 
 <style>
-html,body{margin:0;padding:0;background:#000;color:#fff;overflow:hidden}
-#app{position:fixed;inset:0}
-video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-#controls{
-  position:absolute;right:12px;bottom:80px;
-  display:flex;flex-direction:column;gap:14px
+html,body{
+  margin:0;
+  padding:0;
+  background:#000;
+  font-family:system-ui,-apple-system;
+  color:#e5e5e5;
+  overflow:hidden;
 }
-.ctrl{
-  width:46px;height:46px;border-radius:50%;
-  background:rgba(0,0,0,.6);border:1px solid #fff;
-  display:flex;align-items:center;justify-content:center;
-  font-size:11px;user-select:none
+
+/* camera */
+video,canvas{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
 }
-.ctrl.active{background:#fff;color:#000}
-#axis{
-  position:absolute;left:50%;top:0;width:1px;height:100%;
-  background:rgba(255,255,255,.3)
+
+/* gradient frame */
+#frame{
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  background:
+    linear-gradient(
+      to bottom,
+      rgba(0,0,0,0.85) 0%,
+      rgba(0,0,0,0.15) 30%,
+      rgba(0,0,0,0.15) 70%,
+      rgba(0,0,0,0.9) 100%
+    );
+}
+
+/* panel */
+#panel{
+  position:fixed;
+  bottom:0;
+  left:0;
+  width:100%;
+  padding:20px 24px;
+  box-sizing:border-box;
+  background:
+    linear-gradient(
+      to top,
+      rgba(0,0,0,0.95),
+      rgba(0,0,0,0.6),
+      rgba(0,0,0,0.0)
+    );
+}
+
+/* typography */
+.label{
+  font-size:11px;
+  letter-spacing:0.18em;
+  opacity:0.6;
+}
+
+.value{
+  font-size:36px;
+  font-weight:300;
+  letter-spacing:0.05em;
+  margin-top:6px;
+}
+
+.sub{
+  display:flex;
+  gap:32px;
+  margin-top:12px;
+}
+
+.subItem{
+  font-size:13px;
+  opacity:0.75;
+}
+
+/* title */
+#title{
+  position:fixed;
+  top:18px;
+  left:50%;
+  transform:translateX(-50%);
+  font-size:12px;
+  letter-spacing:0.22em;
+  opacity:0.5;
 }
 </style>
 </head>
 
 <body>
-<div id="app">
-  <video id="video" autoplay muted playsinline></video>
-  <canvas id="canvas"></canvas>
-  <div id="axis"></div>
 
-  <div id="controls">
-    <div class="ctrl" id="rec">REC</div>
-    <div class="ctrl" id="inv">INV</div>
-    <div class="ctrl" id="trc">TRC</div>
-    <div class="ctrl" id="axs">AXS</div>
-    <div class="ctrl" id="face">FACE</div>
-    <div class="ctrl" id="rst">RST</div>
+<video id="video" autoplay muted playsinline></video>
+<canvas id="canvas"></canvas>
+
+<div id="frame"></div>
+
+<div id="title">STABILITY · STILLNESS · INDEX</div>
+
+<div id="panel">
+  <div class="label">STABILITY STILLNESS INDEX</div>
+  <div class="value" id="ssi">--</div>
+  <div class="sub">
+    <div class="subItem">STABILITY <span id="stab">--</span></div>
+    <div class="subItem">STILLNESS <span id="still">--</span></div>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <script>
-const v=document.getElementById("video");
-const c=document.getElementById("canvas");
-const x=c.getContext("2d");
-c.width=innerWidth;c.height=innerHeight;
+const video=document.getElementById("video");
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
 
-let hist=[],maxH=80,rec=false,inv=false,lock=false,lockX=null;
-let faceMode=1,face=null;
+canvas.width=innerWidth;
+canvas.height=innerHeight;
 
-const btn=i=>document.getElementById(i);
-btn("rec").onclick=()=>btn("rec").classList.toggle("active",rec=!rec);
-btn("inv").onclick=()=>btn("inv").classList.toggle("active",inv=!inv);
-btn("trc").onclick=()=>{maxH=maxH===80?240:80;btn("trc").classList.toggle("active")}
-btn("axs").onclick=()=>{lock=!lock;lockX=null;btn("axs").classList.toggle("active")}
-btn("face").onclick=()=>{faceMode=(faceMode+1)%3;btn("face").classList.toggle("active",faceMode)}
-btn("rst").onclick=()=>hist=[];
+const ssiEl=document.getElementById("ssi");
+const stabEl=document.getElementById("stab");
+const stillEl=document.getElementById("still");
 
-const pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`});
-pose.setOptions({smoothLandmarks:true});
+let centers=[];
+let angles=[];
 
-const faceMesh=new FaceMesh({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
-faceMesh.setOptions({maxNumFaces:1});
-faceMesh.onResults(r=>face=r.multiFaceLandmarks?.[0]);
+/* math */
+function center(pts){
+  return{
+    x:(pts[0].x+pts[1].x+pts[2].x+pts[3].x)/4,
+    y:(pts[0].y+pts[1].y+pts[2].y+pts[3].y)/4
+  };
+}
+
+function angle(a,b){
+  return Math.atan2(b.y-a.y,b.x-a.x);
+}
+
+function variance(arr){
+  const m=arr.reduce((a,b)=>a+b,0)/arr.length;
+  return arr.reduce((a,b)=>a+(b-m)*(b-m),0)/arr.length;
+}
+
+/* pose */
+const pose=new Pose({
+  locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+});
+pose.setOptions({
+  smoothLandmarks:true,
+  minDetectionConfidence:0.5,
+  minTrackingConfidence:0.5
+});
 
 pose.onResults(r=>{
-  x.save();
-  if(inv){x.filter="invert(1)"}else{x.filter="none"}
-  x.drawImage(r.image,0,0,c.width,c.height);
-  x.restore();
+  ctx.drawImage(r.image,0,0,canvas.width,canvas.height);
+  if(!r.poseLandmarks) return;
 
-  if(r.poseLandmarks){
-    let pts=[11,12,23,24].map(i=>r.poseLandmarks[i]);
-    let cx=pts.reduce((a,p)=>a+p.x,0)/4;
-    let cy=pts.reduce((a,p)=>a+p.y,0)/4;
-    if(lock){if(lockX==null)lockX=cx;cx=lockX}
-    if(rec||!hist.length){hist.push({x:cx,y:cy});if(hist.length>maxH)hist.shift()}
-    x.strokeStyle=inv?"#fff":"#000";
-    x.beginPath();
-    hist.forEach((p,i)=>{
-      let X=p.x*c.width,Y=p.y*c.height;
-      i?x.lineTo(X,Y):x.moveTo(X,Y);
-    });
-    x.stroke();
+  const ls=r.poseLandmarks[11];
+  const rs=r.poseLandmarks[12];
+  const lh=r.poseLandmarks[23];
+  const rh=r.poseLandmarks[24];
+
+  const c=center([ls,rs,lh,rh]);
+  const a=Math.abs(angle(ls,rs)-angle(lh,rh));
+
+  centers.push(c);
+  angles.push(a);
+
+  if(centers.length>60){
+    centers.shift();
+    angles.shift();
   }
 
-  if(face && faceMode){
-    let xs=face.map(p=>p.x*c.width);
-    let ys=face.map(p=>p.y*c.height);
-    let cx=xs.reduce((a,b)=>a+b,0)/xs.length;
-    let cy=ys.reduce((a,b)=>a+b,0)/ys.length;
-    let r=Math.max(...xs.map((x,i)=>Math.hypot(x-cx,ys[i]-cy)));
+  if(centers.length<20) return;
 
-    x.fillStyle=inv?"#000":"#000";
-    x.beginPath();x.arc(cx,cy,r,0,Math.PI*2);x.fill();
+  const moves=centers.slice(1).map((p,i)=>
+    Math.hypot(p.x-centers[i].x,p.y-centers[i].y)
+  );
 
-    if(faceMode===2){
-      x.strokeStyle=inv?"#fff":"#fff";
-      face.forEach(p=>{
-        x.beginPath();
-        x.arc(p.x*c.width,p.y*c.height,1.5,0,6.28);
-        x.stroke();
-      });
-    }
-  }
+  const stability=Math.max(0,1-variance(moves)*500);
+  const stillness=Math.max(0,1-variance(angles)*200);
+
+  const ssi=Math.round((stability*0.6+stillness*0.4)*100);
+
+  ssiEl.textContent=ssi;
+  stabEl.textContent=Math.round(stability*100);
+  stillEl.textContent=Math.round(stillness*100);
 });
 
-const cam=new Camera(v,{
-  onFrame:async()=>{
-    await pose.send({image:v});
-    await faceMesh.send({image:v});
-  },
-  width:720,height:1280
+/* camera */
+const camera=new Camera(video,{
+  onFrame:async()=>await pose.send({image:video}),
+  width:640,
+  height:480
 });
-cam.start();
+camera.start();
 </script>
+
 </body>
 </html>
